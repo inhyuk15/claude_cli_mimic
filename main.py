@@ -1,5 +1,5 @@
-def main():
-    print("Hello from claude-cli-mimic!")
+from src.app import main
+
 
 
 if __name__ == "__main__":
