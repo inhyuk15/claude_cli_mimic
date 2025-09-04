@@ -1,8 +1,14 @@
 import asyncio
+from typing import TypedDict
 from langchain_openai import ChatOpenAI
 from langgraph_supervisor import create_supervisor
 from langgraph.prebuilt import create_react_agent
+
 from langchain.tools import tool
+
+from core.agents.file_creator import build_agent
+
+    
 
 @tool
 def dummy_tool():
@@ -24,20 +30,22 @@ def build_embedded_agent(model: str):
         prompt=EMBEDDED_PROMPT,
         name="embedded_agent"
     )
+    
+    
     return agent
 
 
 SUPERVISOR_PROMPT = """You are a planner.
 
 FOR EVERY USER REQUEST, RUN THIS SEQUENCE:
-1) Transfer to `embedded_agent` exactly once. Wait until it transfers back.
+1) Transfer to `creator agent` exactly once. Wait until it transfers back.
 
 Do NOT generate code yourself. Do NOT call any tools yourself.
 Do NOT skip step 2 even if step 1 already produced output.
 """
 
-# from dotenv import load_dotenv
-# load_dotenv()
+from dotenv import load_dotenv
+load_dotenv()
 
 def build_supervisor(agents: list[any], model: str):
     llm = ChatOpenAI(model=model, streaming=True)
@@ -51,8 +59,10 @@ def build_supervisor(agents: list[any], model: str):
     return workflow.compile()
 
 def build():
-    embedded_agent = build_embedded_agent("gpt-4")
-    supervisor = build_supervisor([embedded_agent], "gpt-4")
+    # embedded_agent = build_embedded_agent("gpt-4")
+    # supervisor = build_supervisor([embedded_agent], "gpt-4")
+    creator_agent = build_agent('gpt-4')
+    supervisor = build_supervisor([creator_agent], "gpt-4")
     return supervisor
 
 class Orchestrator:
@@ -81,12 +91,14 @@ class Orchestrator:
         #     elif typ == "on_chain_error":
         #         await self.events_q.put({"type": "error", "message": str(data.get("error"))})
         # await self.events_q.put({"type": "final", "text": "something"})
+        await self.events_q.put({'type: tool_start'})
+        
         await self.events_q.put({'type': 'done'})
         
         
 if __name__ == "__main__":
     agent = build()
-    user_input = "hi"
+    user_input = "create a file named hello.txt with the content 'Hello, World!'"
     payload = {
         "messages": {
             "role": "user",
