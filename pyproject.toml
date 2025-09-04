@@ -5,10 +5,13 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "dotenv>=0.9.9",
     "langchain>=0.3.27",
     "langchain-openai>=0.3.32",
     "langgraph>=0.6.6",
+    "langgraph-supervisor>=0.0.29",
     "prompt-toolkit>=3.0.51",
     "pytest>=8.4.1",
     "pytest-async>=0.1.1",
+    "textual>=6.1.0",
 ]
