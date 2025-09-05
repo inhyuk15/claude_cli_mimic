@@ -41,7 +41,6 @@ FOR EVERY USER REQUEST, RUN THIS SEQUENCE:
 1) Transfer to `creator agent` exactly once. Wait until it transfers back.
 
 Do NOT generate code yourself. Do NOT call any tools yourself.
-Do NOT skip step 2 even if step 1 already produced output.
 """
 
 from dotenv import load_dotenv
@@ -80,10 +79,13 @@ class Orchestrator:
                 if token:
                     await self.events_q.put({"type": "token", "text": token})
 
-        #     elif typ == "on_tool_start":
-        #         await self.events_q.put({"type": "tool_start",
-        #                                  "name": ev.get("name") or "tool",
-        #                                  "args": data.get("input")})
+            elif typ == "on_tool_start":
+                approved = True
+                
+                
+                # await self.events_q.put({"type": "tool_start",
+                #                          "name": ev.get("name") or "tool",
+                #                          "args": data.get("input")})
         #     elif typ == "on_tool_end":
         #         await self.events_q.put({"type": "tool_end",
         #                                  "name": ev.get("name") or "tool",
