@@ -1,5 +1,5 @@
 import asyncio
-from typing import TypedDict
+from typing import Any, AsyncIterator, Dict, TypedDict
 from langchain_openai import ChatOpenAI
 from langgraph_supervisor import create_supervisor
 from langgraph.prebuilt import create_react_agent
@@ -92,51 +92,61 @@ class Orchestrator:
         self.cmd_q = cmd_q
         self.agent = build()
         self._approval_future = None
+        self.config = {'configurable': {'thread_id': 'conv-1'}}
         
         
     async def run(self, user_input: str):
-        config = {"configurable": {"thread_id": "conv-1"}}
         payload = {"messages": [HumanMessage(content=user_input)]}
+        
+        max_rounds, round = 10, 0
+        
+        while True:
+            round += 1
+            if round > max_rounds:
+                await self._emit(etype='error', message='Too many interrupt rounds')
+                break
+                
+            stream = self.agent.astream_events(payload, config=self.config, version='v2')
+            intr = await self._process_events(stream)
+            
+            if not intr:
+                break
+            
+            await self._emit(etype='interrupt', payload=intr)
+            resume = await self.cmd_q.get()
+            payload = Command(resume=resume)
+        
+        await self.events_q.put({"type": "done"})
 
-        async for ev in self.agent.astream_events(payload, config=config, version='v2'):
-            event = ev.get("event"); data = ev.get("data") or {}
-            print(ev)
-            if event == 'on_chat_model_stream':
-                token = data.get('chunk') or data.get('token') or ''
-                content = getattr(token, 'content')
-                if content:
-                    await self.events_q.put({'type': 'token', 'content': content})
+    
+    async def _process_events(self, stream: AsyncIterator[Dict[str, Any]]):
+        async for ev in stream:
+            event = ev.get('event')
+            data = ev.get('data') or {}
+            
+            if event =='on_chat_model_stream':
+                chunk = data.get('chunk') or data.get('token')
+                text = getattr(chunk, 'content') if chunk is not None else ''
+                if text:
+                    await self._emit(etype='token', content=text)
+                    
+            elif event == 'on_tool_start':
+                await self._emit(etype='on_tool_start', content=_tool_start_payload(ev))
+                
+            elif event =='on_tool_end':
+                await self._emit(etype='on_tool_end', content=_tool_end_payload(ev))
+                
             elif event == 'on_chain_stream':
-                chunk = data.get('chunk') or {}
+                chunk = data.get('chunk')
                 intr = chunk.get('__interrupt__')
                 if intr:
-                    await self.events_q.put({"type": "interrupt", "payload": intr})
-                    # await self.cmd_q.put(True)
-                    resume = await self.cmd_q.get()
-
-                    cmd = Command(resume=resume)
-                    async for ev2 in self.agent.astream_events(cmd, config=config, version="v2"):
-                        e2 = ev2.get("event"); d2 = ev2.get("data") or {}
-                        if e2 == "on_tool_start":
-                            await self.events_q.put({"type": "on_tool_start",
-                                                    "content": _tool_start_payload(ev2)})
-                        elif e2 == "on_tool_end":
-                            await self.events_q.put({"type": "on_tool_end",
-                                                    "content": _tool_end_payload(ev2)})
-                        elif e2 == "on_chat_model_stream":
-                            # 재개 후 자연어가 오면 토큰으로 밀기
-                            ch2 = d2.get("chunk") or d2.get("token")
-                            t2 = getattr(ch2, "content", "") if ch2 is not None else ""
-                            if t2:
-                                await self.events_q.put({"type": "token", "content": t2})
-            elif event == "on_tool_start":
-                await self.events_q.put({"type": "on_tool_start",
-                                        "content": _tool_start_payload(ev)})
-            elif event == "on_tool_end":
-                await self.events_q.put({"type": "on_tool_end",
-                                        "content": _tool_end_payload(ev)})
+                    return intr
                 
-        await self.events_q.put({"type": "done"})
+        return None
+ 
+    
+    async def _emit(self, etype: str, **kwargs):
+        await self.events_q.put({'type': etype, **kwargs})
     
     # UI가 호출해주는 승인 setter
     def set_approval(self, value: bool):
