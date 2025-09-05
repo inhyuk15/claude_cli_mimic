@@ -166,28 +166,26 @@ class ChatApp(App):
             )
             
             if type == "token":
-                chunk = ev.get('content', '')
-                if not chunk:
+                text = ev.get('text', '')
+                if not text:
                     continue
                 
                 if cur_turn:
                     if cur_turn.status == "thinking":
                         cur_turn.status = "streaming"
                         self._stop_thinking()
-                    cur_turn.assistant_buffer += chunk
-            elif type == 'on_tool_start':
+                    cur_turn.assistant_buffer += text
+            elif type == 'tool_start':
                 """ draw tool calling state """
-                content = ev.get('content')
-                tool_name = content.get('tool')
-                args = content.get('args')
+                tool_name = ev.get('tool')
+                args = ev.get('args')
                 log = f'toolname: {tool_name}, args: {args}'
                 chat_log.write(f'tool calling start: {log}')
                 
-            elif type == 'on_tool_end':
+            elif type == 'tool_end':
                 """ draw tool calling end, and draw result of tool calling """
-                content = ev.get('content')
-                tool_name = content.get('tool')
-                output = content.get('output_preview')
+                tool_name = ev.get('tool')
+                output = ev.get('output_preview')
                 log = f'toolname: {tool_name}, output: {output}'
                 chat_log.write(f'tool calling end: {log}')
             elif type == 'interrupt':
