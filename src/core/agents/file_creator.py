@@ -15,6 +15,7 @@ The system will ask for human approval before executing tools - just proceed wit
 
 Example: If user asks to create hello.txt with "Hello World", call write_file(path="hello.txt", content="Hello World").
 """
+
 @tool("write_file")
 def file_write_tool(path:str, content: str) -> str:
     """write content to a file at the given path"""
@@ -39,7 +40,7 @@ def build_llm(model, tools:list[any], temperature = 0):
         model=model,
         temperature=temperature,
         streaming=True,
-        model_kwargs={'tool_choice': 'required'},
+        # model_kwargs={'tool_choice': 'required'},
     ).bind_tools(tools)
 
     

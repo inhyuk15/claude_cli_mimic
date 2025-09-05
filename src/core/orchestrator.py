@@ -10,25 +10,53 @@ from langchain.tools import tool
 
 from core.agents.file_creator import build_agent
 
-def _to_text_from_stream_data(data) -> str:
-    chunk = data.get("chunk") or data.get("token")
-    if chunk is None:
-        return ""
-    content = getattr(chunk, "content", None)
-    if isinstance(content, str):
-        return content
-    if isinstance(chunk, str):
-        return chunk
-    return ""
 
-def _is_tool_call_stream(data) -> bool:
-    chunk = data.get("chunk")
-    if getattr(chunk, "tool_calls", None):
-        return True
-    if data.get("tool_call_chunks") or data.get("invalid_tool_calls"):
-        return True
-    add = getattr(chunk, "additional_kwargs", {}) if chunk is not None else {}
-    return bool(add.get("tool_calls"))
+def _tool_start_payload(ev: dict) -> dict:
+    # ev: {'event','data','name','run_id','metadata',...}
+    data = ev.get("data", {})
+    meta = ev.get("metadata", {})
+    tool_input = data.get("input", {})
+
+    args = {}
+    path = tool_input.get("path")
+    if path is not None:
+        args["path"] = path
+
+    content_val = tool_input.get("content")
+    if isinstance(content_val, str):
+        args["content_len"] = len(content_val)
+        args["content_preview"] = content_val if len(content_val) <= 80 else content_val[:77] + "..."
+
+    return {
+        "tool": ev.get("name", "unknown_tool"),
+        "args": args,
+        "run_id": ev.get("run_id"),
+        "step": meta.get("langgraph_step"),
+        "node": meta.get("langgraph_node"),
+        "thread_id": meta.get("thread_id"),
+        "tags": ev.get("tags") or [],
+        "parent_ids": ev.get("parent_ids") or [],
+    }
+
+
+def _tool_end_payload(ev: dict) -> dict:
+    # 로그 기준: 결과는 항상 data["output"]로 온다고 가정
+    data = ev.get("data", {})
+    meta = ev.get("metadata", {})
+    out = data.get("output")
+
+    out_preview = out
+    if isinstance(out_preview, str) and len(out_preview) > 120:
+        out_preview = out_preview[:117] + "..."
+
+    return {
+        "tool": ev.get("name", "unknown_tool"),
+        "output_preview": out_preview,
+        "run_id": ev.get("run_id"),
+        "step": meta.get("langgraph_step"),
+        "node": meta.get("langgraph_node"),
+        "thread_id": meta.get("thread_id"),
+    }
 
 SUPERVISOR_PROMPT = """You are a planner.
 
@@ -59,8 +87,9 @@ def build():
     # return supervisor
 
 class Orchestrator:
-    def __init__(self, events_q):
+    def __init__(self, events_q, cmd_q):
         self.events_q = events_q
+        self.cmd_q = cmd_q
         self.agent = build()
         self._approval_future = None
         
@@ -71,21 +100,42 @@ class Orchestrator:
 
         async for ev in self.agent.astream_events(payload, config=config, version='v2'):
             event = ev.get("event"); data = ev.get("data") or {}
-            if event == 'on_chain_stream':
+            print(ev)
+            if event == 'on_chat_model_stream':
+                token = data.get('chunk') or data.get('token') or ''
+                content = getattr(token, 'content')
+                if content:
+                    await self.events_q.put({'type': 'token', 'content': content})
+            elif event == 'on_chain_stream':
                 chunk = data.get('chunk') or {}
-                if '__interrupt__' in chunk:
-                    await self.events_q.put({'type': 'interrupt'})
-                    cmd = Command(resume=True)
-                    
-                    async for ev2 in self.agent.astream_events(
-                        cmd, config=config, version='v2'
-                    ):
-                        event = ev2.get('event')
-                        if event == 'on_tool_start':
-                            await self.events_q.put({'type': 'on_tool_start', 'content': ev2})
-                        elif event == 'on_tool_end':
-                            await self.events_q.put({'type': 'on_tool_end', 'content': ev2})
-                    
+                intr = chunk.get('__interrupt__')
+                if intr:
+                    await self.events_q.put({"type": "interrupt", "payload": intr})
+                    # await self.cmd_q.put(True)
+                    resume = await self.cmd_q.get()
+
+                    cmd = Command(resume=resume)
+                    async for ev2 in self.agent.astream_events(cmd, config=config, version="v2"):
+                        e2 = ev2.get("event"); d2 = ev2.get("data") or {}
+                        if e2 == "on_tool_start":
+                            await self.events_q.put({"type": "on_tool_start",
+                                                    "content": _tool_start_payload(ev2)})
+                        elif e2 == "on_tool_end":
+                            await self.events_q.put({"type": "on_tool_end",
+                                                    "content": _tool_end_payload(ev2)})
+                        elif e2 == "on_chat_model_stream":
+                            # 재개 후 자연어가 오면 토큰으로 밀기
+                            ch2 = d2.get("chunk") or d2.get("token")
+                            t2 = getattr(ch2, "content", "") if ch2 is not None else ""
+                            if t2:
+                                await self.events_q.put({"type": "token", "content": t2})
+            elif event == "on_tool_start":
+                await self.events_q.put({"type": "on_tool_start",
+                                        "content": _tool_start_payload(ev)})
+            elif event == "on_tool_end":
+                await self.events_q.put({"type": "on_tool_end",
+                                        "content": _tool_end_payload(ev)})
+                
         await self.events_q.put({"type": "done"})
     
     # UI가 호출해주는 승인 setter
@@ -114,9 +164,10 @@ async def consume_and_auto_approve(q: asyncio.Queue, orch: Orchestrator):
     
 async def main():
     events_q = asyncio.Queue()
-    orch = Orchestrator(events_q)
+    cmd_q = asyncio.Queue()
+    orch = Orchestrator(events_q, cmd_q)
     user_input = "create a file named hello.txt with the content 'Hello, World!'"
-
+    # user_input = "hi"
     consumer = asyncio.create_task(consume_and_auto_approve(events_q, orch))
     await orch.run(user_input)
     await consumer
