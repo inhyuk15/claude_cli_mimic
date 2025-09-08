@@ -1,3 +1,6 @@
+"""
+Custom input widgets for the Claude CLI Mimic application.
+"""
 from textual.widgets import Input
 from textual.message import Message
 

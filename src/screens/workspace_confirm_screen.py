@@ -1,3 +1,7 @@
+"""
+Modal screens for the Claude CLI Mimic application.
+"""
+
 from textual import on
 from textual.widgets import Static, OptionList
 from textual.widgets.option_list import Option
@@ -6,6 +10,7 @@ from textual.screen import ModalScreen
 
 
 class WorkspaceConfirmScreen(ModalScreen[bool]):
+    """워크스페이스 접근 권한을 확인하는 모달 화면"""
     CSS = """
 #panel {
     width: 80%;
@@ -27,10 +32,22 @@ class WorkspaceConfirmScreen(ModalScreen[bool]):
     ]
     
     def __init__(self, cwd: str) -> None:
+        """
+        Initialize the workspace confirmation screen.
+        
+        Args:
+            cwd (str): The current working directory path to display to the user
+        """
         super().__init__()
         self.cwd = cwd
         
     def compose(self):
+        """
+        Create the UI layout for the confirmation dialog.
+        
+        Returns:
+            The composed UI elements including title, warning text, and options
+        """
         yield Center(
                 Vertical(
                     Static("[bold orange]Do you trust the files in this folder?[/bold orange]\n", markup=True, classes="title"),
@@ -51,16 +68,30 @@ class WorkspaceConfirmScreen(ModalScreen[bool]):
         )
         
     async def _on_mount(self):
+        """
+        Set up the screen after it's mounted.
+        
+        This method focuses the option list and selects the first option
+        by default for better keyboard navigation.
+        """
         ol = self.query_one(OptionList)
         ol.focus()
         ol.index = 0
         
     @on(OptionList.OptionSelected)
     def on_option_selected(self, event: OptionList.OptionSelected) -> None:
+        """
+        Handle option selection from the list.
+        
+        Args:
+            event: The option selection event containing the selected option ID
+        """
         self.dismiss(event.option_id == 'yes')
         
     def action_choose_yes(self) -> None:
+        """Handle the keyboard shortcut for choosing 'Yes, proceed'."""
         self.dismiss(True)
     
     def action_choose_no(self) -> None:
+        """Handle the keyboard shortcut for choosing 'No, exit'."""
         self.dismiss(False)
